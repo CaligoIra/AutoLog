@@ -18,13 +18,15 @@
 | 잘못된 값 거르기 | 부팅 직후 들어오는 0 km, 출발값보다 작은 값은 무시하고, 움직이지 않은 운행(0 km)은 남기지 않음 |
 | 목적지 연결 | 내비 목적지 도착 이벤트를 받아 운행의 도착지로 기록 (연결만 되어 있고 아직 시험 전) |
 | 운행 목적 음성 기록 | 기어를 P로 두면 "이번 운행 목적을 말씀해 주세요"라고 묻고, 답을 운행기록부 비고(목적)로 저장. 못 알아들으면 한 번 더 묻고, 놓친 운행은 주차 중 「목적 말하기」 버튼으로 다시 물음 |
+| 출퇴근 자동 판정 | 운행 시작·종료 때 차 위치를 내비 즐겨찾기의 집·회사와 비교해(300 m 이내) 집→회사는 '출근', 회사→집은 '퇴근' 운행으로 묻지 않고 기록 |
+| 업무 구분 | 운행기록부 서식대로 출퇴근 / 일반업무 / 비업무로 나눔. 출퇴근이 아니면 목적 답으로 정하고("개인 …"이라고 답하면 비업무), 주차 중 화면에서 바꿀 수 있음 |
+| 업무사용비율 | 올해 총주행거리, 업무용 사용거리(출퇴근 + 일반업무)와 업무사용비율을 화면 위에 표시. 구분이 안 된 운행은 업무용에 넣지 않음 |
 
 음성은 Pleos TextToSpeech·SpeechToText SDK가 아직 준비 중이라 Android 표준 `TextToSpeech`·`SpeechRecognizer`로 만들었고, `VoiceIO` 인터페이스 뒤에 두어 SDK가 나오면 구현만 바꿉니다.
 에뮬레이터에서는 표준 `SpeechRecognizer`가 Pleos 인식 서비스(`ai.umos.ambientai`)에 연결되는 것까지 확인했습니다. 다만 에뮬레이터에는 마이크 입력이 없고, 내장 음성 합성 엔진은 표준 `TextToSpeech`로 찾을 수 없어(엔진 등록에 DEFAULT 카테고리가 없음) 소리 없이 화면 글자로 진행됩니다.
 
 ## 만들 예정
 
-- 업무용 / 출퇴근 / 비업무 구분
 - 국세청 운행기록부 서식으로 엑셀 내보내기
 
 ## 동작 방식
@@ -38,15 +40,16 @@ Pleos NaviHelper ── 목적지 도착 ───▶ NaviMonitor ────�
 - **TripRecorderService**: 부팅(`BOOT_COMPLETED`)이나 앱 실행 때 시작되는 포그라운드 서비스(`specialUse`, `START_STICKY`). 기어·계기판 값을 받아 TripRecorder에 넘깁니다.
   Android 14는 앱 화면이 보이지 않을 때 마이크 유형으로 바꾸는 것을 막으므로, 앱 화면이 보일 때 `microphone` 유형을 더합니다.
 - **TripRecorder**: 기어 상태로 운행 구간을 자릅니다. 진행 중인 운행도 DB에 `endedAt`이 비어 있는 행으로 저장하므로, 앱이 다시 켜지면 그 행에서 이어갑니다.
-- **PurposeAsker**: 운행이 끝나면(P) 목적을 음성으로 묻고 답을 그 운행의 `purpose`에 저장합니다. 묻는 동안에도 기록은 멈추지 않습니다.
-- **화면**: 기록하지 않고 DB를 보여주기만 합니다. 운전 중에도 볼 수 있도록 한눈에 읽히게 구성했고(`distractionOptimized`), 유일한 버튼인 「목적 말하기」는 주차(P) 중에만 눌립니다.
+- **TripClassifier**: 운행 시작·종료 때 NaviMonitor에 차가 집·회사 근처인지 묻습니다. 출발지를 모르면 앞 운행의 도착지를 출발지로 보고, 집→회사·회사→집이면 출퇴근으로 정합니다.
+- **PurposeAsker**: 운행이 끝나면(P) 목적을 음성으로 묻고 답을 그 운행의 `purpose`에 저장하며, 답으로 일반업무·비업무를 정합니다. 출퇴근 운행은 묻지 않고 기록했다고만 알립니다. 묻는 동안에도 기록은 멈추지 않습니다.
+- **화면**: 기록하지 않고 DB를 보여주기만 합니다. 운전 중에도 볼 수 있도록 한눈에 읽히게 구성했고(`distractionOptimized`), 「목적 말하기」 버튼과 업무 구분 선택은 주차(P) 중에만 눌립니다.
 
 ## 사용한 Pleos SDK
 
 | SDK | 버전 | 사용 기능 | 권한 |
 |---|---|---|---|
 | Vehicle | 2.3.2 | `Odometer`(누적 주행거리, km), `Gear`(기어 선택 상태) | `pleos.car.permission.CAR_DRIVE` |
-| NaviHelper | 3.0.5 | `onDestinationArrived`(목적지 도착) | — |
+| NaviHelper | 3.0.5 | `onDestinationArrived`(목적지 도착), `getBookmarkInfo`(즐겨찾기 집·회사), `getCurrentLocationInfo`(현재 위치) | `pleos.car.permission.NAVI_ROUTE` |
 
 음성 질문·인식은 Pleos SDK 공개 전까지 Android 표준 API를 쓰며 `RECORD_AUDIO`, `FOREGROUND_SERVICE_MICROPHONE` 권한이 필요합니다(마이크를 거절해도 기록은 계속됨).
 
@@ -58,14 +61,15 @@ app/src/main/java/com/autolog/app/
 ├── MainActivity.kt             화면 진입, 기록 서비스 시작
 ├── MainViewModel.kt            DB의 운행 기록을 화면에 전달
 ├── recorder/TripRecorderService.kt   포그라운드 기록 서비스 + 부팅 리시버
-├── trip/                       Trip(운행 1건), TripDao·DB, TripRecorder(운행 구간 판단)
+├── trip/                       Trip(운행 1건), TripDao·DB, TripRecorder(운행 구간 판단),
+│                               TripType(업무 구분·합계), TripClassifier(출퇴근 판정)
 ├── vehicle/VehicleMonitor.kt   Pleos Vehicle SDK 래퍼
-├── navi/NaviMonitor.kt         Pleos NaviHelper 래퍼
+├── navi/NaviMonitor.kt         Pleos NaviHelper 래퍼(도착 이벤트, 집·회사 근처인지 판단)
 ├── voice/                      VoiceIO(음성 입출력), AndroidVoiceIO(표준 API 구현), PurposeAsker(주차 후 목적 묻기)
 └── ui/AutoLogScreen.kt         Compose 화면
 ```
 
-`app/src/debug`에는 마이크 없이 시험할 수 있도록, adb로 보낸 문장을 음성 인식 결과 대신 쓰는 디버그 전용 구현이 있습니다(릴리스 빌드에는 들어가지 않음).
+`app/src/debug`에는 에뮬레이터에서 시험할 수 있도록 adb로 보낸 문장을 음성 인식 결과 대신, adb로 보낸 장소를 내비 현재 위치 대신 쓰는 디버그 전용 구현이 있습니다(릴리스 빌드에는 들어가지 않음).
 
 ## 빌드
 
@@ -98,5 +102,12 @@ app/src/main/java/com/autolog/app/
    ```bash
    adb shell am broadcast --user 10 -a com.autolog.app.debug.ANSWER -p com.autolog.app --es text "'A사 납품 미팅'"
    ```
+6. 출퇴근 판정은 먼저 에뮬레이터 내비 앱에서 즐겨찾기 집·회사를 등록해 두고 시험합니다.
+   에뮬레이터 내비의 현재 위치는 한곳에 고정되어 있어(`adb emu geo fix`도 따르지 않음), 디버그 빌드에서는 D를 누르기 전에 출발 장소를, P를 누르기 전에 도착 장소를 보냅니다.
+   ```bash
+   adb shell am broadcast --user 10 -a com.autolog.app.debug.PLACE -p com.autolog.app --es place HOME
+   adb shell am broadcast --user 10 -a com.autolog.app.debug.PLACE -p com.autolog.app --es place OFFICE
+   ```
+   HOME→OFFICE면 묻지 않고 '출근' 운행으로 기록됩니다. 보낸 장소는 다음 위치 확인 한 번에만 쓰입니다.
 
 참고: 에뮬레이터는 재부팅하면 계기판 값이 0으로 돌아가고, 현재값보다 작은 값은 받지 않습니다(HTTP 400).

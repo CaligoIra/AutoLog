@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -31,12 +32,15 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.pleos.playground.vehicle.constant.control.VehicleGear
 import com.autolog.app.MainViewModel
 import com.autolog.app.trip.Trip
+import com.autolog.app.trip.TripType
+import com.autolog.app.trip.UsageSummary
 import com.autolog.app.trip.distanceKm
 import com.autolog.app.voice.PurposeAsker
 import java.text.DecimalFormat
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToInt
 
 private val Navy = Color(0xFF16324F)
 private val Panel = Color(0xFF1E2A38)
@@ -52,6 +56,7 @@ fun AutoLogScreen(viewModel: MainViewModel) {
     val error by viewModel.vehicle.lastError.collectAsStateWithLifecycle()
     val current by viewModel.current.collectAsStateWithLifecycle()
     val trips by viewModel.trips.collectAsStateWithLifecycle()
+    val summary by viewModel.summary.collectAsStateWithLifecycle()
     val asking by viewModel.asking.collectAsStateWithLifecycle()
 
     MaterialTheme(colorScheme = darkColorScheme(primary = Accent, background = Navy, surface = Panel)) {
@@ -65,9 +70,11 @@ fun AutoLogScreen(viewModel: MainViewModel) {
             StatusPanel(odometerKm, gear, current, error, Modifier.weight(1f))
             TripLog(
                 trips,
+                summary,
                 parked = gear == VehicleGear.GEAR_PARK,
                 asking = asking,
                 onAskPurpose = viewModel::askPurpose,
+                onSetType = viewModel::setType,
                 modifier = Modifier.weight(1f),
             )
         }
@@ -124,9 +131,11 @@ private fun StatusPanel(
 @Composable
 private fun TripLog(
     trips: List<Trip>,
+    summary: UsageSummary,
     parked: Boolean,
     asking: PurposeAsker.Asking?,
     onAskPurpose: (Trip) -> Unit,
+    onSetType: (Trip, TripType) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier) {
@@ -134,18 +143,53 @@ private fun TripLog(
         Spacer(Modifier.height(24.dp))
         if (trips.isEmpty()) {
             Text("아직 기록이 없어요.", fontSize = 28.sp, color = Color.White.copy(alpha = 0.6f))
+        } else {
+            SummaryCard(summary)
+            Spacer(Modifier.height(16.dp))
         }
         // 목록은 보던 줄을 붙잡고 있어서, 새 운행이 맨 위에 붙으면 화면 밖에 숨는다. 새 운행이 생기면 맨 위로 올린다.
         val listState = rememberLazyListState()
         LaunchedEffect(trips.firstOrNull()?.id) { listState.scrollToItem(0) }
         LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            items(trips, key = { it.id }) { TripRow(it, parked, asking, onAskPurpose) }
+            items(trips, key = { it.id }) { TripRow(it, parked, asking, onAskPurpose, onSetType) }
+        }
+    }
+}
+
+/** 운행기록부 서식 아래쪽 합계와 같은 숫자. */
+@Composable
+private fun SummaryCard(summary: UsageSummary) {
+    PanelCard {
+        Text(
+            "올해 업무사용비율 ${summary.ratio?.let { "${(it * 100).roundToInt()}%" } ?: "-"}",
+            fontSize = 32.sp,
+            fontWeight = FontWeight.Bold,
+            color = Accent,
+        )
+        Text(
+            "총 ${kmFormat.format(summary.totalKm)} km · 업무용 ${kmFormat.format(summary.businessUseKm)} km " +
+                "(출퇴근 ${kmFormat.format(summary.commuteKm)} · 일반업무 ${kmFormat.format(summary.businessKm)})",
+            fontSize = 24.sp,
+            color = Color.White,
+        )
+        if (summary.unclassified > 0) {
+            Text(
+                "구분 안 된 운행 ${summary.unclassified}건은 업무용에 넣지 않았어요",
+                fontSize = 22.sp,
+                color = Color.White.copy(alpha = 0.7f),
+            )
         }
     }
 }
 
 @Composable
-private fun TripRow(trip: Trip, parked: Boolean, asking: PurposeAsker.Asking?, onAskPurpose: (Trip) -> Unit) {
+private fun TripRow(
+    trip: Trip,
+    parked: Boolean,
+    asking: PurposeAsker.Asking?,
+    onAskPurpose: (Trip) -> Unit,
+    onSetType: (Trip, TripType) -> Unit,
+) {
     PanelCard {
         Text(
             "${timeFormat.format(Date(trip.startedAt))} – ${trip.endedAt?.let { timeFormat.format(Date(it)) } ?: ""}" +
@@ -159,6 +203,9 @@ private fun TripRow(trip: Trip, parked: Boolean, asking: PurposeAsker.Asking?, o
             fontSize = 26.sp,
             color = Color.White.copy(alpha = 0.8f),
         )
+        listOfNotNull(trip.startPlace?.let { "출발 ${it.label}" }, trip.endPlace?.let { "도착 ${it.label}" })
+            .takeIf { it.isNotEmpty() }
+            ?.let { Text(it.joinToString(" · "), fontSize = 24.sp, color = Accent) }
         trip.destination?.let { Text("도착: $it", fontSize = 24.sp, color = Accent) }
         when {
             trip.purpose != null -> Text("목적: ${trip.purpose}", fontSize = 28.sp, color = Color.White)
@@ -170,6 +217,18 @@ private fun TripRow(trip: Trip, parked: Boolean, asking: PurposeAsker.Asking?, o
             // 운전 중에는 누를 수 없게 한다. 질문은 주차(P)한 뒤에만.
             else -> OutlinedButton(onClick = { onAskPurpose(trip) }, enabled = parked && asking == null) {
                 Text("목적 말하기", fontSize = 24.sp)
+            }
+        }
+        // 구분도 주차 중에만 고칠 수 있다.
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            TripType.entries.forEach { type ->
+                FilterChip(
+                    selected = trip.type == type,
+                    onClick = { onSetType(trip, type) },
+                    label = { Text(type.label, fontSize = 22.sp) },
+                    enabled = parked,
+                    modifier = Modifier.height(48.dp),
+                )
             }
         }
     }

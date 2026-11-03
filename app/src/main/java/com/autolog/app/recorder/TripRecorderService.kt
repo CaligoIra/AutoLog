@@ -20,6 +20,7 @@ import androidx.lifecycle.lifecycleScope
 import com.autolog.app.MainActivity
 import com.autolog.app.R
 import com.autolog.app.autoLogApp
+import com.autolog.app.trip.TripEvent
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
@@ -42,12 +43,18 @@ class TripRecorderService : LifecycleService() {
         val app = autoLogApp
         app.vehicle.start()
         app.navi.start()
+        // 장소 확인 준비를 첫 운행 전에 해 둔다(디버그 빌드는 이때부터 adb로 보낸 장소를 받는다).
+        val classifier = app.classifier
 
         lifecycleScope.launch {
             combine(app.vehicle.gear, app.vehicle.odometerKm) { gear, km -> gear to km }
                 .collect { (gear, km) ->
-                    // 묻는 동안에도 기어·계기판 기록은 계속돼야 하므로 따로 띄운다.
-                    app.recorder.update(gear, km)?.let { ended -> launch { app.purposeAsker.ask(ended) } }
+                    // 위치를 확인하고 묻는 동안에도 기어·계기판 기록은 계속돼야 하므로 따로 띄운다.
+                    when (val event = app.recorder.update(gear, km)) {
+                        is TripEvent.Started -> launch { classifier.onStarted(event.trip) }
+                        is TripEvent.Ended -> launch { app.purposeAsker.onTripEnded(classifier.onEnded(event.trip)) }
+                        null -> Unit
+                    }
                 }
         }
         lifecycleScope.launch {

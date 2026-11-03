@@ -16,15 +16,15 @@ class TripRecorder(private val dao: TripDao) {
 
     private val mutex = Mutex()
 
-    /** 이번 값으로 운행이 끝났으면 그 운행을 돌려준다(목적을 물을 때 쓴다). */
-    suspend fun update(gear: VehicleGear, odometerKm: Float?, now: Long = System.currentTimeMillis()): Trip? {
+    /** 이번 값으로 운행이 시작되거나 끝났으면 알려준다(출발·도착 장소를 확인하고 목적을 물을 때 쓴다). */
+    suspend fun update(gear: VehicleGear, odometerKm: Float?, now: Long = System.currentTimeMillis()): TripEvent? {
         if (odometerKm == null || odometerKm <= 0f) return null
         return mutex.withLock {
             val open = dao.openTrip()
             when {
                 open == null && gear.isMoving() -> {
-                    dao.insert(Trip(startedAt = now, startKm = odometerKm))
-                    null
+                    val trip = Trip(startedAt = now, startKm = odometerKm)
+                    TripEvent.Started(trip.copy(id = dao.insert(trip)))
                 }
 
                 // 주차장에서 D→P만 한 것처럼 거리가 0이면 운행기록부에 남길 게 없어 지운다.
@@ -34,7 +34,7 @@ class TripRecorder(private val dao: TripDao) {
                 }
 
                 open != null && gear == VehicleGear.GEAR_PARK && odometerKm > open.startKm ->
-                    open.copy(endedAt = now, endKm = odometerKm).also { dao.update(it) }
+                    TripEvent.Ended(open.copy(endedAt = now, endKm = odometerKm).also { dao.update(it) })
 
                 else -> null
             }
@@ -47,4 +47,11 @@ class TripRecorder(private val dao: TripDao) {
 
     private fun VehicleGear.isMoving() =
         this != VehicleGear.GEAR_PARK && this != VehicleGear.GEAR_UNKNOWN
+}
+
+sealed interface TripEvent {
+    val trip: Trip
+
+    data class Started(override val trip: Trip) : TripEvent
+    data class Ended(override val trip: Trip) : TripEvent
 }
