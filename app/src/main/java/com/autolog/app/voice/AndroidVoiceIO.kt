@@ -13,6 +13,7 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -71,10 +72,17 @@ class AndroidVoiceIO(context: Context) : VoiceIO {
         configured
         val id = UUID.randomUUID().toString()
         val done = CompletableDeferred<Unit>().also { speaking[id] = it }
-        if (tts.speak(text, TextToSpeech.QUEUE_ADD, null, id) == TextToSpeech.SUCCESS) {
-            withTimeoutOrNull(SPEAK_TIMEOUT_MS) { done.await() }
+        try {
+            if (tts.speak(text, TextToSpeech.QUEUE_ADD, null, id) == TextToSpeech.SUCCESS) {
+                withTimeoutOrNull(SPEAK_TIMEOUT_MS) { done.await() }
+            }
+        } catch (e: CancellationException) {
+            // 출발해서 묻기를 멈추면 읽던 문장도 끊는다.
+            tts.stop()
+            throw e
+        } finally {
+            speaking.remove(id)
         }
-        speaking.remove(id)
     }
 
     // SpeechRecognizer는 메인 스레드에서만 만들고 써야 한다.

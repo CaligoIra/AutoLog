@@ -41,11 +41,19 @@ data class UsageSummary(
 }
 
 fun List<Trip>.summarize(): UsageSummary {
-    fun km(type: TripType) = filter { it.type == type }.sumOf { (it.distanceKm ?: 0f).toDouble() }.toFloat()
-    return UsageSummary(
-        totalKm = sumOf { (it.distanceKm ?: 0f).toDouble() }.toFloat(),
-        commuteKm = km(TripType.COMMUTE),
-        businessKm = km(TripType.BUSINESS),
-        unclassified = count { it.type == null },
-    )
+    var total = 0.0
+    var commute = 0.0
+    var business = 0.0
+    var unclassified = 0
+    for (trip in this) {
+        val km = (trip.distanceKm ?: 0f).toDouble()
+        total += km
+        when (trip.type) {
+            TripType.COMMUTE -> commute += km
+            TripType.BUSINESS -> business += km
+            TripType.PERSONAL -> Unit
+            null -> unclassified++
+        }
+    }
+    return UsageSummary(total.toFloat(), commute.toFloat(), business.toFloat(), unclassified)
 }

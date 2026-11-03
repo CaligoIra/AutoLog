@@ -3,11 +3,13 @@ package com.autolog.app
 import android.app.Application
 import android.content.Context
 import androidx.room.Room
+import com.autolog.app.export.LogbookInfoStore
 import com.autolog.app.navi.NaviMonitor
 import com.autolog.app.navi.createPlaceSource
 import com.autolog.app.trip.AutoLogDatabase
 import com.autolog.app.trip.MIGRATION_1_2
 import com.autolog.app.trip.MIGRATION_2_3
+import com.autolog.app.trip.MIGRATION_3_4
 import com.autolog.app.trip.TripClassifier
 import com.autolog.app.trip.TripRecorder
 import com.autolog.app.vehicle.VehicleMonitor
@@ -19,7 +21,7 @@ class AutoLogApp : Application() {
 
     val db by lazy {
         Room.databaseBuilder(this, AutoLogDatabase::class.java, "autolog.db")
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
             .build()
     }
     val recorder by lazy { TripRecorder(db.tripDao()) }
@@ -27,6 +29,7 @@ class AutoLogApp : Application() {
     val purposeAsker by lazy { PurposeAsker(db.tripDao(), createVoiceIO(this)) }
     val vehicle by lazy { VehicleMonitor(this) }
     val navi by lazy { NaviMonitor(this) }
+    val logbookInfo by lazy { LogbookInfoStore(this) }
 }
 
 val Context.autoLogApp: AutoLogApp get() = applicationContext as AutoLogApp

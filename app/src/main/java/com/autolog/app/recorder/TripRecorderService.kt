@@ -21,6 +21,9 @@ import com.autolog.app.MainActivity
 import com.autolog.app.R
 import com.autolog.app.autoLogApp
 import com.autolog.app.trip.TripEvent
+import com.autolog.app.trip.isMoving
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
@@ -47,12 +50,16 @@ class TripRecorderService : LifecycleService() {
         val classifier = app.classifier
 
         lifecycleScope.launch {
+            // 운행이 끝난 뒤 도착 장소를 확인하고 목적을 묻는 일. 위치를 확인하고 묻는 동안에도 기어·계기판 기록은 계속돼야 하므로 따로 띄운다.
+            var settling: Job? = null
             combine(app.vehicle.gear, app.vehicle.odometerKm) { gear, km -> gear to km }
                 .collect { (gear, km) ->
-                    // 위치를 확인하고 묻는 동안에도 기어·계기판 기록은 계속돼야 하므로 따로 띄운다.
+                    // 다시 출발하면 묻기를 멈춘다(운전 중에는 묻지 않는다). 다 멈춘 뒤에 운행을 이어 가야 이어 간 운행에 도착 장소가 남지 않는다.
+                    if (gear.isMoving()) settling?.cancelAndJoin()
                     when (val event = app.recorder.update(gear, km)) {
                         is TripEvent.Started -> launch { classifier.onStarted(event.trip) }
-                        is TripEvent.Ended -> launch { app.purposeAsker.onTripEnded(classifier.onEnded(event.trip)) }
+                        is TripEvent.Resumed -> Log.i(TAG, "trip ${event.trip.id} resumed after a short stop")
+                        is TripEvent.Ended -> settling = launch { app.purposeAsker.onTripEnded(classifier.onEnded(event.trip)) }
                         null -> Unit
                     }
                 }

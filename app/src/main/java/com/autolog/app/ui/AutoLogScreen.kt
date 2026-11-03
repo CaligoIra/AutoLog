@@ -13,19 +13,34 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -42,12 +57,14 @@ import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
 
-private val Navy = Color(0xFF16324F)
-private val Panel = Color(0xFF1E2A38)
-private val Accent = Color(0xFF4FC3F7)
+internal val Navy = Color(0xFF16324F)
+internal val Panel = Color(0xFF1E2A38)
+internal val Accent = Color(0xFF4FC3F7)
+internal val Warn = Color(0xFFFFB74D)
 
-private val kmFormat = DecimalFormat("#,##0.0")
+internal val kmFormat = DecimalFormat("#,##0.0")
 private val timeFormat = SimpleDateFormat("HH:mm", Locale.KOREA)
+private val dayFormat = SimpleDateFormat("M월 d일 (E)", Locale.KOREA)
 
 @Composable
 fun AutoLogScreen(viewModel: MainViewModel) {
@@ -58,24 +75,72 @@ fun AutoLogScreen(viewModel: MainViewModel) {
     val trips by viewModel.trips.collectAsStateWithLifecycle()
     val summary by viewModel.summary.collectAsStateWithLifecycle()
     val asking by viewModel.asking.collectAsStateWithLifecycle()
+    val logbookInfo by viewModel.logbookInfo.collectAsStateWithLifecycle()
+    val exportMessage by viewModel.exportMessage.collectAsStateWithLifecycle()
+
+    val parked = gear == VehicleGear.GEAR_PARK
+    var editing by remember { mutableStateOf<Trip?>(null) }
+    var showLogbook by rememberSaveable { mutableStateOf(false) }
+    // 기록부 보기와 목적 적기는 주차 중에만. 출발하면 닫는다.
+    LaunchedEffect(parked) {
+        if (!parked) {
+            editing = null
+            showLogbook = false
+        }
+    }
 
     MaterialTheme(colorScheme = darkColorScheme(primary = Accent, background = Navy, surface = Panel)) {
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Navy)
-                .padding(48.dp),
-            horizontalArrangement = Arrangement.spacedBy(48.dp),
-        ) {
-            StatusPanel(odometerKm, gear, current, error, Modifier.weight(1f))
-            TripLog(
+        if (showLogbook) {
+            LogbookSheet(
                 trips,
-                summary,
-                parked = gear == VehicleGear.GEAR_PARK,
-                asking = asking,
-                onAskPurpose = viewModel::askPurpose,
+                logbookInfo,
+                exportMessage,
+                onSaveInfo = viewModel::saveLogbookInfo,
+                onSetDriver = viewModel::setDriver,
                 onSetType = viewModel::setType,
-                modifier = Modifier.weight(1f),
+                onEditPurpose = { editing = it },
+                onExport = viewModel::exportLogbook,
+                onClose = {
+                    showLogbook = false
+                    viewModel.clearExportMessage()
+                },
+            )
+        } else {
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Navy)
+                    .padding(48.dp),
+                horizontalArrangement = Arrangement.spacedBy(48.dp),
+            ) {
+                StatusPanel(odometerKm, gear, current, error, Modifier.weight(1f))
+                TripLog(
+                    trips,
+                    summary,
+                    parked = parked,
+                    asking = asking,
+                    onAskPurpose = viewModel::askPurpose,
+                    onEditPurpose = { editing = it },
+                    onAskMissing = viewModel::askMissingPurposes,
+                    onSetType = viewModel::setType,
+                    onOpenLogbook = { showLogbook = true },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+        editing?.let { trip ->
+            PurposeDialog(
+                trip,
+                canSpeak = asking == null,
+                onSave = {
+                    viewModel.savePurpose(trip, it)
+                    editing = null
+                },
+                onSpeak = {
+                    viewModel.askPurpose(trip)
+                    editing = null
+                },
+                onDismiss = { editing = null },
             )
         }
     }
@@ -135,11 +200,20 @@ private fun TripLog(
     parked: Boolean,
     asking: PurposeAsker.Asking?,
     onAskPurpose: (Trip) -> Unit,
+    onEditPurpose: (Trip) -> Unit,
+    onAskMissing: () -> Unit,
     onSetType: (Trip, TripType) -> Unit,
+    onOpenLogbook: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier) {
-        Text("운행 기록", fontSize = 40.sp, fontWeight = FontWeight.Bold, color = Color.White)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("운행 기록", fontSize = 40.sp, fontWeight = FontWeight.Bold, color = Color.White, modifier = Modifier.weight(1f))
+            // 표가 빽빽해 운전 중에는 읽기 어려우므로 주차 중에만 연다.
+            OutlinedButton(onClick = onOpenLogbook, enabled = parked && trips.isNotEmpty()) {
+                Text("운행기록부 보기", fontSize = 24.sp)
+            }
+        }
         Spacer(Modifier.height(24.dp))
         if (trips.isEmpty()) {
             Text("아직 기록이 없어요.", fontSize = 28.sp, color = Color.White.copy(alpha = 0.6f))
@@ -147,11 +221,33 @@ private fun TripLog(
             SummaryCard(summary)
             Spacer(Modifier.height(16.dp))
         }
+        val missing = remember(trips) { trips.count { it.purpose == null } }
+        if (missing > 0) {
+            OutlinedButton(onClick = onAskMissing, enabled = parked && asking == null, modifier = Modifier.fillMaxWidth()) {
+                Text("목적 없는 운행 ${missing}건 · 차례로 답하기", fontSize = 24.sp)
+            }
+            Spacer(Modifier.height(16.dp))
+        }
         // 목록은 보던 줄을 붙잡고 있어서, 새 운행이 맨 위에 붙으면 화면 밖에 숨는다. 새 운행이 생기면 맨 위로 올린다.
         val listState = rememberLazyListState()
         LaunchedEffect(trips.firstOrNull()?.id) { listState.scrollToItem(0) }
+        // 서식의 사용일자처럼 날짜별로 묶고, 그날 달린 거리를 함께 보인다. 기록이 바뀔 때만 다시 묶는다.
+        val days = remember(trips) { trips.groupBy { dayFormat.format(Date(it.startedAt)) } }
         LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            items(trips, key = { it.id }) { TripRow(it, parked, asking, onAskPurpose, onSetType) }
+            days.forEach { (day, dayTrips) ->
+                item(key = "day $day") {
+                    Text(
+                        "$day · ${kmFormat.format(dayTrips.sumOf { (it.distanceKm ?: 0f).toDouble() })} km",
+                        fontSize = 28.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White.copy(alpha = 0.8f),
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                }
+                items(dayTrips, key = { it.id }) {
+                    TripRow(it, parked, asking, onAskPurpose, onEditPurpose, onSetType)
+                }
+            }
         }
     }
 }
@@ -188,6 +284,7 @@ private fun TripRow(
     parked: Boolean,
     asking: PurposeAsker.Asking?,
     onAskPurpose: (Trip) -> Unit,
+    onEditPurpose: (Trip) -> Unit,
     onSetType: (Trip, TripType) -> Unit,
 ) {
     PanelCard {
@@ -207,16 +304,24 @@ private fun TripRow(
             .takeIf { it.isNotEmpty() }
             ?.let { Text(it.joinToString(" · "), fontSize = 24.sp, color = Accent) }
         trip.destination?.let { Text("도착: $it", fontSize = 24.sp, color = Accent) }
+        // 운전 중에는 누를 수 없게 한다. 묻고 적는 것은 주차(P)한 뒤에만.
         when {
-            trip.purpose != null -> Text("목적: ${trip.purpose}", fontSize = 28.sp, color = Color.White)
             asking != null && asking.tripId == trip.id -> Text(
                 if (asking.listening) "목적을 듣고 있어요…" else "목적을 묻는 중…",
                 fontSize = 28.sp,
                 color = Accent,
             )
-            // 운전 중에는 누를 수 없게 한다. 질문은 주차(P)한 뒤에만.
-            else -> OutlinedButton(onClick = { onAskPurpose(trip) }, enabled = parked && asking == null) {
-                Text("목적 말하기", fontSize = 24.sp)
+            trip.purpose != null -> Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("목적: ${trip.purpose}", fontSize = 28.sp, color = Color.White, modifier = Modifier.weight(1f))
+                TextButton(onClick = { onEditPurpose(trip) }, enabled = parked) { Text("고치기", fontSize = 24.sp) }
+            }
+            else -> Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedButton(onClick = { onAskPurpose(trip) }, enabled = parked && asking == null) {
+                    Text("목적 말하기", fontSize = 24.sp)
+                }
+                OutlinedButton(onClick = { onEditPurpose(trip) }, enabled = parked) {
+                    Text("직접 입력", fontSize = 24.sp)
+                }
             }
         }
         // 구분도 주차 중에만 고칠 수 있다.
@@ -234,10 +339,58 @@ private fun TripRow(
     }
 }
 
+/** 목적을 키보드로 적거나 고친다. 말로 하기를 누르면 음성으로 다시 묻는다. */
 @Composable
-private fun PanelCard(content: @Composable () -> Unit) {
+private fun PurposeDialog(
+    trip: Trip,
+    canSpeak: Boolean,
+    onSave: (String) -> Unit,
+    onSpeak: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var text by rememberSaveable(trip.id) { mutableStateOf(trip.purpose.orEmpty()) }
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focus.requestFocus() }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (trip.purpose == null) "운행 목적 입력" else "운행 목적 고치기", fontSize = 32.sp) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Text(
+                    "${dayFormat.format(Date(trip.startedAt))} ${timeFormat.format(Date(trip.startedAt))} 출발 · " +
+                        "${kmFormat.format(trip.distanceKm ?: 0f)} km",
+                    fontSize = 24.sp,
+                )
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    singleLine = true,
+                    textStyle = TextStyle(fontSize = 28.sp),
+                    placeholder = { Text("예: A사 납품 미팅, 개인 장보기", fontSize = 24.sp) },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { if (text.isNotBlank()) onSave(text) }),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(focus),
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onSave(text) }, enabled = text.isNotBlank()) { Text("저장", fontSize = 24.sp) }
+        },
+        dismissButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedButton(onClick = onSpeak, enabled = canSpeak) { Text("말로 하기", fontSize = 24.sp) }
+                TextButton(onClick = onDismiss) { Text("취소", fontSize = 24.sp) }
+            }
+        },
+    )
+}
+
+@Composable
+internal fun PanelCard(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(containerColor = Panel),
     ) {
