@@ -11,13 +11,16 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -29,6 +32,7 @@ import ai.pleos.playground.vehicle.constant.control.VehicleGear
 import com.autolog.app.MainViewModel
 import com.autolog.app.trip.Trip
 import com.autolog.app.trip.distanceKm
+import com.autolog.app.voice.PurposeAsker
 import java.text.DecimalFormat
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -48,6 +52,7 @@ fun AutoLogScreen(viewModel: MainViewModel) {
     val error by viewModel.vehicle.lastError.collectAsStateWithLifecycle()
     val current by viewModel.current.collectAsStateWithLifecycle()
     val trips by viewModel.trips.collectAsStateWithLifecycle()
+    val asking by viewModel.asking.collectAsStateWithLifecycle()
 
     MaterialTheme(colorScheme = darkColorScheme(primary = Accent, background = Navy, surface = Panel)) {
         Row(
@@ -58,7 +63,13 @@ fun AutoLogScreen(viewModel: MainViewModel) {
             horizontalArrangement = Arrangement.spacedBy(48.dp),
         ) {
             StatusPanel(odometerKm, gear, current, error, Modifier.weight(1f))
-            TripLog(trips, Modifier.weight(1f))
+            TripLog(
+                trips,
+                parked = gear == VehicleGear.GEAR_PARK,
+                asking = asking,
+                onAskPurpose = viewModel::askPurpose,
+                modifier = Modifier.weight(1f),
+            )
         }
     }
 }
@@ -111,21 +122,30 @@ private fun StatusPanel(
 }
 
 @Composable
-private fun TripLog(trips: List<Trip>, modifier: Modifier = Modifier) {
+private fun TripLog(
+    trips: List<Trip>,
+    parked: Boolean,
+    asking: PurposeAsker.Asking?,
+    onAskPurpose: (Trip) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Column(modifier) {
         Text("운행 기록", fontSize = 40.sp, fontWeight = FontWeight.Bold, color = Color.White)
         Spacer(Modifier.height(24.dp))
         if (trips.isEmpty()) {
             Text("아직 기록이 없어요.", fontSize = 28.sp, color = Color.White.copy(alpha = 0.6f))
         }
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            items(trips, key = { it.id }) { TripRow(it) }
+        // 목록은 보던 줄을 붙잡고 있어서, 새 운행이 맨 위에 붙으면 화면 밖에 숨는다. 새 운행이 생기면 맨 위로 올린다.
+        val listState = rememberLazyListState()
+        LaunchedEffect(trips.firstOrNull()?.id) { listState.scrollToItem(0) }
+        LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            items(trips, key = { it.id }) { TripRow(it, parked, asking, onAskPurpose) }
         }
     }
 }
 
 @Composable
-private fun TripRow(trip: Trip) {
+private fun TripRow(trip: Trip, parked: Boolean, asking: PurposeAsker.Asking?, onAskPurpose: (Trip) -> Unit) {
     PanelCard {
         Text(
             "${timeFormat.format(Date(trip.startedAt))} – ${trip.endedAt?.let { timeFormat.format(Date(it)) } ?: ""}" +
@@ -140,6 +160,18 @@ private fun TripRow(trip: Trip) {
             color = Color.White.copy(alpha = 0.8f),
         )
         trip.destination?.let { Text("도착: $it", fontSize = 24.sp, color = Accent) }
+        when {
+            trip.purpose != null -> Text("목적: ${trip.purpose}", fontSize = 28.sp, color = Color.White)
+            asking != null && asking.tripId == trip.id -> Text(
+                if (asking.listening) "목적을 듣고 있어요…" else "목적을 묻는 중…",
+                fontSize = 28.sp,
+                color = Accent,
+            )
+            // 운전 중에는 누를 수 없게 한다. 질문은 주차(P)한 뒤에만.
+            else -> OutlinedButton(onClick = { onAskPurpose(trip) }, enabled = parked && asking == null) {
+                Text("목적 말하기", fontSize = 24.sp)
+            }
+        }
     }
 }
 

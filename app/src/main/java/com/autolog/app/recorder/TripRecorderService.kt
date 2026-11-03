@@ -1,5 +1,6 @@
 package com.autolog.app.recorder
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -7,8 +8,10 @@ import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
@@ -22,18 +25,19 @@ import kotlinx.coroutines.launch
 
 /**
  * 화면을 열지 않아도 시동(부팅)부터 운행을 기록하는 포그라운드 서비스.
- * 기어·계기판 변화를 TripRecorder에 넘기고, 결과는 Room에 남는다.
+ * 기어·계기판 변화를 TripRecorder에 넘기고, 결과는 Room에 남는다. 운행이 끝나면 목적을 음성으로 묻는다.
+ *
+ * Android 14는 앱 화면이 보이지 않을 때(부팅 직후 등) 마이크를 쓰는 서비스로 바꾸는 것을 막는다.
+ * 그래서 처음에는 기록만 하는 유형으로 시작하고, 앱 화면이 보일 때 마이크 유형을 더한다.
+ * 한 번 더하면 화면이 뒤로 가도 이 서비스가 살아 있는 동안 주차 후 목적을 물을 수 있다.
  */
 class TripRecorderService : LifecycleService() {
 
+    private var micEnabled = false
+
     override fun onCreate() {
         super.onCreate()
-        ServiceCompat.startForeground(
-            this,
-            NOTIFICATION_ID,
-            buildNotification(),
-            if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0,
-        )
+        goForeground()
 
         val app = autoLogApp
         app.vehicle.start()
@@ -41,7 +45,10 @@ class TripRecorderService : LifecycleService() {
 
         lifecycleScope.launch {
             combine(app.vehicle.gear, app.vehicle.odometerKm) { gear, km -> gear to km }
-                .collect { (gear, km) -> app.recorder.update(gear, km) }
+                .collect { (gear, km) ->
+                    // 묻는 동안에도 기어·계기판 기록은 계속돼야 하므로 따로 띄운다.
+                    app.recorder.update(gear, km)?.let { ended -> launch { app.purposeAsker.ask(ended) } }
+                }
         }
         lifecycleScope.launch {
             app.navi.arrivals.collect { app.recorder.onDestinationArrived(it) }
@@ -50,7 +57,30 @@ class TripRecorderService : LifecycleService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
+        if (intent?.getBooleanExtra(EXTRA_APP_VISIBLE, false) == true &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        ) {
+            micEnabled = true
+        }
+        goForeground()
         return START_STICKY
+    }
+
+    private fun goForeground() {
+        try {
+            ServiceCompat.startForeground(this, NOTIFICATION_ID, buildNotification(), foregroundType())
+        } catch (e: SecurityException) {
+            // 화면이 막 사라진 순간처럼 마이크를 더할 수 없으면 마이크 없이 기록만 이어간다.
+            Log.w(TAG, "microphone foreground type refused", e)
+            micEnabled = false
+            ServiceCompat.startForeground(this, NOTIFICATION_ID, buildNotification(), foregroundType())
+        }
+    }
+
+    private fun foregroundType(): Int {
+        var type = if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0
+        if (micEnabled && Build.VERSION.SDK_INT >= 30) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        return type
     }
 
     override fun onDestroy() {
@@ -77,11 +107,17 @@ class TripRecorderService : LifecycleService() {
     }
 
     companion object {
+        private const val TAG = "TripRecorderService"
         private const val CHANNEL_ID = "trip_recorder"
         private const val NOTIFICATION_ID = 1
+        private const val EXTRA_APP_VISIBLE = "app_visible"
 
-        fun start(context: Context) {
-            ContextCompat.startForegroundService(context, Intent(context, TripRecorderService::class.java))
+        /** appVisible: 앱 화면이 보이는 지금 부른다면 true. 그때만 마이크를 쓸 수 있게 된다. */
+        fun start(context: Context, appVisible: Boolean = false) {
+            ContextCompat.startForegroundService(
+                context,
+                Intent(context, TripRecorderService::class.java).putExtra(EXTRA_APP_VISIBLE, appVisible),
+            )
         }
     }
 }

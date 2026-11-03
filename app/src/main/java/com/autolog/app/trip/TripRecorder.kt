@@ -16,20 +16,27 @@ class TripRecorder(private val dao: TripDao) {
 
     private val mutex = Mutex()
 
-    suspend fun update(gear: VehicleGear, odometerKm: Float?, now: Long = System.currentTimeMillis()) {
-        if (odometerKm == null || odometerKm <= 0f) return
-        mutex.withLock {
+    /** 이번 값으로 운행이 끝났으면 그 운행을 돌려준다(목적을 물을 때 쓴다). */
+    suspend fun update(gear: VehicleGear, odometerKm: Float?, now: Long = System.currentTimeMillis()): Trip? {
+        if (odometerKm == null || odometerKm <= 0f) return null
+        return mutex.withLock {
             val open = dao.openTrip()
             when {
-                open == null && gear.isMoving() ->
+                open == null && gear.isMoving() -> {
                     dao.insert(Trip(startedAt = now, startKm = odometerKm))
+                    null
+                }
 
                 // 주차장에서 D→P만 한 것처럼 거리가 0이면 운행기록부에 남길 게 없어 지운다.
-                open != null && gear == VehicleGear.GEAR_PARK && odometerKm == open.startKm ->
+                open != null && gear == VehicleGear.GEAR_PARK && odometerKm == open.startKm -> {
                     dao.delete(open)
+                    null
+                }
 
                 open != null && gear == VehicleGear.GEAR_PARK && odometerKm > open.startKm ->
-                    dao.update(open.copy(endedAt = now, endKm = odometerKm))
+                    open.copy(endedAt = now, endKm = odometerKm).also { dao.update(it) }
+
+                else -> null
             }
         }
     }

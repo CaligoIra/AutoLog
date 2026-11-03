@@ -17,10 +17,13 @@
 | 끊김 없는 기록 | 운행 도중 앱이 종료되거나 시스템이 재시작되어도 같은 운행을 이어서 기록 |
 | 잘못된 값 거르기 | 부팅 직후 들어오는 0 km, 출발값보다 작은 값은 무시하고, 움직이지 않은 운행(0 km)은 남기지 않음 |
 | 목적지 연결 | 내비 목적지 도착 이벤트를 받아 운행의 도착지로 기록 (연결만 되어 있고 아직 시험 전) |
+| 운행 목적 음성 기록 | 기어를 P로 두면 "이번 운행 목적을 말씀해 주세요"라고 묻고, 답을 운행기록부 비고(목적)로 저장. 못 알아들으면 한 번 더 묻고, 놓친 운행은 주차 중 「목적 말하기」 버튼으로 다시 물음 |
+
+음성은 Pleos TextToSpeech·SpeechToText SDK가 아직 준비 중이라 Android 표준 `TextToSpeech`·`SpeechRecognizer`로 만들었고, `VoiceIO` 인터페이스 뒤에 두어 SDK가 나오면 구현만 바꿉니다.
+에뮬레이터에서는 표준 `SpeechRecognizer`가 Pleos 인식 서비스(`ai.umos.ambientai`)에 연결되는 것까지 확인했습니다. 다만 에뮬레이터에는 마이크 입력이 없고, 내장 음성 합성 엔진은 표준 `TextToSpeech`로 찾을 수 없어(엔진 등록에 DEFAULT 카테고리가 없음) 소리 없이 화면 글자로 진행됩니다.
 
 ## 만들 예정
 
-- 음성으로 운행 목적 남기기
 - 업무용 / 출퇴근 / 비업무 구분
 - 국세청 운행기록부 서식으로 엑셀 내보내기
 
@@ -33,8 +36,10 @@ Pleos NaviHelper ── 목적지 도착 ───▶ NaviMonitor ────�
 ```
 
 - **TripRecorderService**: 부팅(`BOOT_COMPLETED`)이나 앱 실행 때 시작되는 포그라운드 서비스(`specialUse`, `START_STICKY`). 기어·계기판 값을 받아 TripRecorder에 넘깁니다.
+  Android 14는 앱 화면이 보이지 않을 때 마이크 유형으로 바꾸는 것을 막으므로, 앱 화면이 보일 때 `microphone` 유형을 더합니다.
 - **TripRecorder**: 기어 상태로 운행 구간을 자릅니다. 진행 중인 운행도 DB에 `endedAt`이 비어 있는 행으로 저장하므로, 앱이 다시 켜지면 그 행에서 이어갑니다.
-- **화면**: 기록하지 않고 DB를 보여주기만 합니다. 운전 중에도 볼 수 있도록 입력 없이 한눈에 읽히게 구성했습니다(`distractionOptimized`).
+- **PurposeAsker**: 운행이 끝나면(P) 목적을 음성으로 묻고 답을 그 운행의 `purpose`에 저장합니다. 묻는 동안에도 기록은 멈추지 않습니다.
+- **화면**: 기록하지 않고 DB를 보여주기만 합니다. 운전 중에도 볼 수 있도록 한눈에 읽히게 구성했고(`distractionOptimized`), 유일한 버튼인 「목적 말하기」는 주차(P) 중에만 눌립니다.
 
 ## 사용한 Pleos SDK
 
@@ -42,6 +47,8 @@ Pleos NaviHelper ── 목적지 도착 ───▶ NaviMonitor ────�
 |---|---|---|---|
 | Vehicle | 2.3.2 | `Odometer`(누적 주행거리, km), `Gear`(기어 선택 상태) | `pleos.car.permission.CAR_DRIVE` |
 | NaviHelper | 3.0.5 | `onDestinationArrived`(목적지 도착) | — |
+
+음성 질문·인식은 Pleos SDK 공개 전까지 Android 표준 API를 쓰며 `RECORD_AUDIO`, `FOREGROUND_SERVICE_MICROPHONE` 권한이 필요합니다(마이크를 거절해도 기록은 계속됨).
 
 ## 폴더 구조
 
@@ -54,8 +61,11 @@ app/src/main/java/com/autolog/app/
 ├── trip/                       Trip(운행 1건), TripDao·DB, TripRecorder(운행 구간 판단)
 ├── vehicle/VehicleMonitor.kt   Pleos Vehicle SDK 래퍼
 ├── navi/NaviMonitor.kt         Pleos NaviHelper 래퍼
+├── voice/                      VoiceIO(음성 입출력), AndroidVoiceIO(표준 API 구현), PurposeAsker(주차 후 목적 묻기)
 └── ui/AutoLogScreen.kt         Compose 화면
 ```
+
+`app/src/debug`에는 마이크 없이 시험할 수 있도록, adb로 보낸 문장을 음성 인식 결과 대신 쓰는 디버그 전용 구현이 있습니다(릴리스 빌드에는 들어가지 않음).
 
 ## 빌드
 
@@ -83,5 +93,10 @@ app/src/main/java/com/autolog/app/
    ```
    브라우저에서 http://127.0.0.1:8088/ → **Emulation Controls** → **Motion**
 4. **Gear Selection**에서 D를 누르고, **Odometer** 값을 올린 뒤 P를 누르면 오른쪽 목록에 운행 1건이 추가됩니다.
+   조작 사이에 몇 초씩 기다려 주세요. 너무 빨리 바꾸면 기어보다 계기판 값이 먼저 도착해 움직이지 않은 운행으로 처리됩니다.
+5. 목적 음성 기록은 디버그 빌드에서, P를 누르기 전에 답을 미리 보내 두면 시험할 수 있습니다.
+   ```bash
+   adb shell am broadcast --user 10 -a com.autolog.app.debug.ANSWER -p com.autolog.app --es text "'A사 납품 미팅'"
+   ```
 
 참고: 에뮬레이터는 재부팅하면 계기판 값이 0으로 돌아가고, 현재값보다 작은 값은 받지 않습니다(HTTP 400).

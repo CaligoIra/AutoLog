@@ -6,6 +6,7 @@ import androidx.room.PrimaryKey
 /**
  * 국세청 운행기록부 한 줄: 주행 전·후 계기판 거리.
  * endedAt == null 이면 아직 운행 중인 구간이다(앱이 죽었다 살아나도 이어서 닫는다).
+ * purpose는 서식의 비고 칸에 들어갈 운행 목적으로, 운행이 끝난 뒤 음성으로 받는다.
  */
 @Entity(tableName = "trips")
 data class Trip(
@@ -15,6 +16,7 @@ data class Trip(
     val endedAt: Long? = null,
     val endKm: Float? = null,
     val destination: String? = null,
+    val purpose: String? = null,
 )
 
 val Trip.distanceKm: Float? get() = endKm?.let { it - startKm }
