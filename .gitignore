@@ -8,3 +8,8 @@
 .externalNativeBuild/
 .cxx/
 .kotlin/
+
+# 릴리스 서명 키(저장소 밖 AutoLog-signing/에 둠)
+/keystore.properties
+*.jks
+*.keystore

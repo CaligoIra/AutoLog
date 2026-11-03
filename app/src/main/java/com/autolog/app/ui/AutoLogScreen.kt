@@ -23,6 +23,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
@@ -46,6 +47,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.pleos.playground.vehicle.constant.control.VehicleGear
 import com.autolog.app.MainViewModel
+import com.autolog.app.trip.ResumeSetting
 import com.autolog.app.trip.Trip
 import com.autolog.app.trip.TripType
 import com.autolog.app.trip.UsageSummary
@@ -77,6 +79,7 @@ fun AutoLogScreen(viewModel: MainViewModel) {
     val asking by viewModel.asking.collectAsStateWithLifecycle()
     val logbookInfo by viewModel.logbookInfo.collectAsStateWithLifecycle()
     val exportMessage by viewModel.exportMessage.collectAsStateWithLifecycle()
+    val resume by viewModel.resume.collectAsStateWithLifecycle()
 
     val parked = gear == VehicleGear.GEAR_PARK
     var editing by remember { mutableStateOf<Trip?>(null) }
@@ -113,7 +116,16 @@ fun AutoLogScreen(viewModel: MainViewModel) {
                     .padding(48.dp),
                 horizontalArrangement = Arrangement.spacedBy(48.dp),
             ) {
-                StatusPanel(odometerKm, gear, current, error, Modifier.weight(1f))
+                StatusPanel(
+                    odometerKm,
+                    gear,
+                    current,
+                    error,
+                    resume,
+                    parked = parked,
+                    onResumeChange = viewModel::setResume,
+                    modifier = Modifier.weight(1f),
+                )
                 TripLog(
                     trips,
                     summary,
@@ -152,6 +164,9 @@ private fun StatusPanel(
     gear: VehicleGear,
     current: Trip?,
     error: String?,
+    resume: ResumeSetting,
+    parked: Boolean,
+    onResumeChange: (ResumeSetting) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(32.dp)) {
@@ -187,8 +202,51 @@ private fun StatusPanel(
             }
         }
 
+        ResumeCard(resume, parked, onResumeChange)
+
         if (error != null) {
             Text("차량 연결 오류: $error", fontSize = 24.sp, color = Color(0xFFFF8A80))
+        }
+    }
+}
+
+/** 잠깐 P에 넣었다 다시 출발할 때 같은 운행으로 이어 갈지. 운행 중에 바뀌면 헷갈리므로 주차 중에만 바꾼다. */
+@Composable
+private fun ResumeCard(setting: ResumeSetting, parked: Boolean, onChange: (ResumeSetting) -> Unit) {
+    PanelCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "잠깐 정차 이어 기록",
+                fontSize = 32.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+                modifier = Modifier.weight(1f),
+            )
+            Switch(
+                checked = setting.enabled,
+                onCheckedChange = { onChange(setting.copy(enabled = it)) },
+                enabled = parked,
+            )
+        }
+        Text(
+            if (setting.enabled) "P에 넣었다가 ${setting.minutes}분 안에 다시 출발하면 같은 운행으로 이어 기록해요."
+            else "P에 넣을 때마다 운행을 나눠 기록해요.",
+            fontSize = 24.sp,
+            color = Color.White.copy(alpha = 0.7f),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            ResumeSetting.MINUTE_CHOICES.forEach { minutes ->
+                FilterChip(
+                    selected = setting.minutes == minutes,
+                    onClick = { onChange(setting.copy(minutes = minutes)) },
+                    label = { Text("${minutes}분", fontSize = 22.sp) },
+                    enabled = parked && setting.enabled,
+                    modifier = Modifier.height(48.dp),
+                )
+            }
+        }
+        if (!parked) {
+            Text("주차 중에만 바꿀 수 있어요.", fontSize = 22.sp, color = Warn)
         }
     }
 }

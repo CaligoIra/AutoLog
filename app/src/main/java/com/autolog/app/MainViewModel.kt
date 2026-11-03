@@ -8,6 +8,7 @@ import ai.pleos.playground.vehicle.constant.control.VehicleGear
 import com.autolog.app.export.Driver
 import com.autolog.app.export.LogbookInfo
 import com.autolog.app.export.exportLogbook
+import com.autolog.app.trip.ResumeSetting
 import com.autolog.app.trip.Trip
 import com.autolog.app.trip.TripType
 import com.autolog.app.trip.UsageSummary
@@ -49,6 +50,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     val logbookInfo: StateFlow<LogbookInfo> = autoLog.logbookInfo.info
 
+    val resume: StateFlow<ResumeSetting> = autoLog.resumeSettings.setting
+
     private val _exportMessage = MutableStateFlow<String?>(null)
     val exportMessage: StateFlow<String?> = _exportMessage.asStateFlow()
 
@@ -78,6 +81,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun saveLogbookInfo(info: LogbookInfo) = autoLog.logbookInfo.save(info)
+
+    /** 잠깐 P에 넣었다 다시 출발할 때 이어 기록할지와 몇 분 안이면 이어 갈지. 다음 출발부터 쓴다. */
+    fun setResume(setting: ResumeSetting) = autoLog.resumeSettings.save(setting)
 
     /** 그해 운행기록부를 엑셀로 만들어 다운로드 폴더에 둔다. */
     fun exportLogbook(year: Int) {

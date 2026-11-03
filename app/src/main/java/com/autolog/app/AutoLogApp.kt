@@ -10,6 +10,7 @@ import com.autolog.app.trip.AutoLogDatabase
 import com.autolog.app.trip.MIGRATION_1_2
 import com.autolog.app.trip.MIGRATION_2_3
 import com.autolog.app.trip.MIGRATION_3_4
+import com.autolog.app.trip.ResumeSettingsStore
 import com.autolog.app.trip.TripClassifier
 import com.autolog.app.trip.TripRecorder
 import com.autolog.app.vehicle.VehicleMonitor
@@ -24,12 +25,13 @@ class AutoLogApp : Application() {
             .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
             .build()
     }
-    val recorder by lazy { TripRecorder(db.tripDao()) }
+    val recorder by lazy { TripRecorder(db.tripDao()) { resumeSettings.setting.value.windowMs } }
     val classifier by lazy { TripClassifier(db.tripDao(), createPlaceSource(this, navi)) }
     val purposeAsker by lazy { PurposeAsker(db.tripDao(), createVoiceIO(this)) }
     val vehicle by lazy { VehicleMonitor(this) }
     val navi by lazy { NaviMonitor(this) }
     val logbookInfo by lazy { LogbookInfoStore(this) }
+    val resumeSettings by lazy { ResumeSettingsStore(this) }
 }
 
 val Context.autoLogApp: AutoLogApp get() = applicationContext as AutoLogApp

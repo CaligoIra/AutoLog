@@ -10,12 +10,12 @@ import kotlinx.coroutines.sync.withLock
  * 계기판 값이 기어 변경보다 늦게 와도 다음 update()에서 처리된다.
  *
  * 신호 대기, 드라이브스루, 주차 자리 옮기기처럼 잠깐 P에 넣었다가 다시 출발하면 방금 끝낸 운행을 이어 간다.
- * 목적을 답하지 않았고 끝난 지 RESUME_WINDOW_MS가 안 지났을 때만이다. 목적을 답했으면 거기서 볼일을 본 것이라 새 운행으로 나눈다.
+ * 목적을 답하지 않았고 끝난 지 resumeWindowMs()가 안 지났을 때만이다(설정에서 끄면 0이라 늘 새 운행). 목적을 답했으면 거기서 볼일을 본 것이라 새 운행으로 나눈다.
  *
  * 부팅 직후 계기판이 실제 값 대신 0을 먼저 보내는 경우가 있어(에뮬레이터에서 확인) 0은 "아직 못 읽음"으로 본다.
  * 누적거리는 줄지 않으므로, 열린 운행의 출발값보다 작은 값도 버리고 다음 값을 기다린다.
  */
-class TripRecorder(private val dao: TripDao) {
+class TripRecorder(private val dao: TripDao, private val resumeWindowMs: () -> Long) {
 
     private val mutex = Mutex()
 
@@ -82,12 +82,8 @@ class TripRecorder(private val dao: TripDao) {
     private fun Trip.isAutoCommute() = type == TripType.COMMUTE && endPlace != null
 
     private fun Trip.canResume(now: Long) =
-        endedAt != null && now - endedAt <= RESUME_WINDOW_MS && (purpose == null || isAutoCommute())
+        endedAt != null && now - endedAt < resumeWindowMs() && (purpose == null || isAutoCommute())
 
-    private companion object {
-        // 신호 대기, 드라이브스루, 셀프 주유가 대개 이 안에 끝난다.
-        const val RESUME_WINDOW_MS = 5 * 60_000L
-    }
 }
 
 /** P도 아니고 모르는 상태도 아니면 차가 움직일 수 있는 기어다(D·R·N). */

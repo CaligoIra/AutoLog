@@ -15,7 +15,7 @@
 | 계기판 거리 기록 | 시작·종료 순간의 누적거리(km)를 저장하고 주행거리를 계산 |
 | 시동부터 백그라운드 기록 | 차량 화면 시스템이 켜지면 기록 서비스가 저절로 시작되어, 앱 화면을 열지 않아도 기록 |
 | 끊김 없는 기록 | 운행 도중 앱이 종료되거나 시스템이 재시작되어도 같은 운행을 이어서 기록 |
-| 잠깐 정차는 한 운행 | 신호 대기·드라이브스루처럼 P에 넣었다가 5분 안에 다시 출발하면 같은 운행으로 이어 기록(출발 시각·주행 전 거리 유지). 출발하는 순간 목적 질문은 멈춤. 목적을 답한 뒤 출발하면 그곳에서 볼일을 본 것으로 보고 새 운행으로 나눔 |
+| 잠깐 정차는 한 운행 | 신호 대기·드라이브스루처럼 P에 넣었다가 정한 시간(기본 5분) 안에 다시 출발하면 같은 운행으로 이어 기록(출발 시각·주행 전 거리 유지). 첫 화면 '잠깐 정차 이어 기록' 카드에서 켜기·끄기와 1·3·5·10분을 고름(주차 중에만). 출발하는 순간 목적 질문은 멈춤. 목적을 답한 뒤 출발하면 그곳에서 볼일을 본 것으로 보고 새 운행으로 나눔 |
 | 잘못된 값 거르기 | 부팅 직후 들어오는 0 km, 출발값보다 작은 값은 무시하고, 움직이지 않은 운행(0 km)은 남기지 않음 |
 | 목적지 연결 | 내비 목적지 도착 이벤트를 받아 운행의 도착지로 기록 (연결만 되어 있고 아직 시험 전) |
 | 운행 목적 음성 기록 | 기어를 P로 두면 "이번 운행 목적을 말씀해 주세요"라고 묻고, 답을 운행기록부 비고(목적)로 저장. 못 알아들으면 한 번 더 묻고, 놓친 운행은 주차 중 「목적 말하기」 버튼으로 다시 물음. "그만"·"나중에"라고 하면 묻기를 멈춤 |
@@ -47,7 +47,7 @@ Pleos NaviHelper ── 목적지 도착 ───▶ NaviMonitor ────�
 - **TripRecorderService**: 부팅(`BOOT_COMPLETED`)이나 앱 실행 때 시작되는 포그라운드 서비스(`specialUse`, `START_STICKY`). 기어·계기판 값을 받아 TripRecorder에 넘깁니다.
   Android 14는 앱 화면이 보이지 않을 때 마이크 유형으로 바꾸는 것을 막으므로, 앱 화면이 보일 때 `microphone` 유형을 더합니다.
 - **TripRecorder**: 기어 상태로 운행 구간을 자릅니다. 진행 중인 운행도 DB에 `endedAt`이 비어 있는 행으로 저장하므로, 앱이 다시 켜지면 그 행에서 이어갑니다.
-  운전 중에는 열린 운행을 메모리에 들고 있어 계기판 값이 바뀔 때마다 DB를 읽지 않습니다. P 뒤 5분 안에 다시 출발하면 목적을 아직 답하지 않은 운행을 이어 갑니다.
+  운전 중에는 열린 운행을 메모리에 들고 있어 계기판 값이 바뀔 때마다 DB를 읽지 않습니다. P 뒤 설정한 시간(기본 5분, `ResumeSettingsStore`) 안에 다시 출발하면 목적을 아직 답하지 않은 운행을 이어 갑니다. 이어 기록을 끄면 P마다 운행을 나눕니다.
 - **TripClassifier**: 운행 시작·종료 때 NaviMonitor에 차가 집·회사 근처인지 묻습니다. 출발지를 모르면 앞 운행의 도착지를 출발지로 보고, 집→회사·회사→집이면 출퇴근으로 정합니다.
 - **PurposeAsker**: 운행이 끝나면(P) 목적을 음성으로 묻고 답을 그 운행의 `purpose`에 저장하며, 답으로 일반업무·비업무를 정합니다. 출퇴근 운행은 묻지 않고 기록했다고만 알립니다. 묻는 동안에도 기록은 멈추지 않습니다.
 - **화면**: 기록하지 않고 DB를 보여주기만 합니다. 운전 중에도 볼 수 있도록 한눈에 읽히게 구성했고(`distractionOptimized`), 목적 말하기·고치기, 업무 구분 선택, 운행기록부 보기는 주차(P) 중에만 눌리고 출발하면 닫힙니다.
@@ -70,7 +70,8 @@ app/src/main/java/com/autolog/app/
 ├── MainViewModel.kt            DB의 운행 기록을 화면에 전달
 ├── recorder/TripRecorderService.kt   포그라운드 기록 서비스 + 부팅 리시버
 ├── trip/                       Trip(운행 1건), TripDao·DB, TripRecorder(운행 구간 판단),
-│                               TripType(업무 구분·합계), TripClassifier(출퇴근 판정)
+│                               TripType(업무 구분·합계), TripClassifier(출퇴근 판정),
+│                               ResumeSettings(잠깐 정차 이어 기록 켜기·시간)
 ├── vehicle/VehicleMonitor.kt   Pleos Vehicle SDK 래퍼
 ├── navi/NaviMonitor.kt         Pleos NaviHelper 래퍼(도착 이벤트, 집·회사 근처인지 판단)
 ├── voice/                      VoiceIO(음성 입출력), AndroidVoiceIO(표준 API 구현), PurposeAsker(주차 후 목적 묻기)
@@ -93,6 +94,27 @@ app/src/main/java/com/autolog/app/
 ```
 
 결과물: `app/build/outputs/apk/debug/app-debug.apk`
+
+### 릴리스 APK
+
+공모전 제출용 서명 APK는 [`apk/CaligoIra_오토로그_release.apk`](apk/CaligoIra_오토로그_release.apk)에 있습니다(release, v2 서명, Pleos Connect 에뮬레이터에서 설치·기록 확인).
+
+```bash
+adb install -g apk/CaligoIra_오토로그_release.apk
+```
+
+직접 만들 때는 서명 정보를 저장소 밖에 두고 프로젝트 루트의 `keystore.properties`(git에 올리지 않음)에 적습니다. 이 파일이 없으면 서명 없는 release APK가 만들어집니다.
+
+```properties
+storeFile=<키 파일 경로>.jks
+storePassword=...
+keyAlias=...
+keyPassword=...
+```
+
+```bash
+./gradlew assembleRelease
+```
 
 ## 에뮬레이터에서 시험하기
 
